@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  slack-bot:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - GOOGLE_DOCS_ID=${GOOGLE_DOCS_ID}
+      - CHROMA_HOST=chromadb
+      - OLLAMA_HOST=http://ollama:11434
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    depends_on:
+      - chromadb
+      - ollama
+    volumes:
+      - ./app:/app/app
+      - ./credentials:/app/credentials:ro
+      - ./scripts:/app/scripts
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]  # Optional: Remove if no GPU
+    restart: unless-stopped
+
+volumes:
+  chroma-data:
+  ollama-models:

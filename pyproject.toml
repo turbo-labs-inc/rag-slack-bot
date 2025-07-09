@@ -1,0 +1,39 @@
+[project]
+name = "doc-qa-slack-bot"
+version = "0.1.0"
+description = "AI-powered Slack bot for answering questions about documentation stored in Google Docs"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "slack-bolt>=1.19.1",
+    "google-api-python-client>=2.149.0",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+    "openai>=1.35.0",
+    "google-generativeai>=0.8.0",
+    "anthropic>=0.34.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-watcher>=0.4.0",
+    "mypy>=1.11.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "C4", "PT", "RUF"]
+ignore = ["E501"]  # line too long - handled by formatter
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
