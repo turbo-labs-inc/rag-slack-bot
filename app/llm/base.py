@@ -12,15 +12,24 @@ class EmbeddingResult(BaseModel):
     embedding: list[float]
     model: str
     token_count: int | None = None
+    success: bool = True
+    error: str | None = None
 
 
 class ResponseResult(BaseModel):
     """Result from response generation."""
 
-    response: str
+    content: str
     model: str
     token_count: int | None = None
     finish_reason: str | None = None
+    success: bool = True
+    error: str | None = None
+
+    @property
+    def response(self) -> str:
+        """Backward compatibility alias for content."""
+        return self.content
 
 
 class LLMProvider(ABC):
@@ -117,3 +126,45 @@ class LLMProviderFactory:
             List of provider names
         """
         return list(cls._providers.keys())
+
+
+async def create_llm_provider() -> LLMProvider:
+    """Create an LLM provider based on current configuration.
+
+    Returns:
+        Configured LLM provider instance
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    if settings.llm_provider == "ollama":
+        from app.llm.ollama import OllamaProvider, OllamaConfig
+
+        config = OllamaConfig(
+            host=settings.ollama_host,
+            model=settings.ollama_model,
+            embedding_model=settings.ollama_embedding_model,
+        )
+        return OllamaProvider(config)
+
+    elif settings.llm_provider == "openai":
+        from app.llm.openai import OpenAIProvider, OpenAIConfig
+
+        config = OpenAIConfig(api_key=settings.openai_api_key)
+        return OpenAIProvider(config)
+
+    elif settings.llm_provider == "gemini":
+        from app.llm.gemini import GeminiProvider, GeminiConfig
+
+        config = GeminiConfig(api_key=settings.gemini_api_key)
+        return GeminiProvider(config)
+
+    elif settings.llm_provider == "anthropic":
+        from app.llm.anthropic import AnthropicProvider, AnthropicConfig
+
+        config = AnthropicConfig(api_key=settings.anthropic_api_key)
+        return AnthropicProvider(config)
+
+    else:
+        raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")

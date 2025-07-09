@@ -59,6 +59,10 @@ class Settings(BaseSettings):
         default="llama3.2",
         description="Ollama model to use",
     )
+    ollama_embedding_model: str = Field(
+        default="nomic-embed-text",
+        description="Ollama embedding model to use",
+    )
 
     # OpenAI Configuration
     openai_api_key: str | None = Field(

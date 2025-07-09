@@ -102,7 +102,7 @@ class OllamaProvider(LLMProvider):
             data = response.json()
 
             return ResponseResult(
-                response=data["response"],
+                content=data["response"],
                 model=self.config.model,
                 token_count=data.get("eval_count"),
                 finish_reason=data.get("done_reason"),
