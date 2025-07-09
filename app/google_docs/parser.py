@@ -90,17 +90,120 @@ class GoogleDocsParser:
         title = document_data.get("title", "Untitled")
         document_id = document_data.get("documentId", "")
 
-        # Extract content from the document body
-        content = document_data.get("body", {}).get("content", [])
-
-        # Parse elements into structured sections
-        sections = self._parse_content_into_sections(content)
+        # Check if document has tabs (newer Google Docs feature)
+        if "tabs" in document_data:
+            print(f"📑 Document has {len(document_data['tabs'])} tabs")
+            sections = self._parse_tabbed_document(document_data["tabs"])
+        else:
+            # Legacy single-tab document
+            print("📄 Document uses legacy single-tab format")
+            content = document_data.get("body", {}).get("content", [])
+            sections = self._parse_content_into_sections(content)
 
         # If no sections were created, create a default section
         if not sections:
             sections = [DocumentSection(title="", level=0)]
 
         return ParsedDocument(title=title, document_id=document_id, sections=sections)
+
+    def _parse_tabbed_document(self, tabs: list[dict[str, Any]]) -> list[DocumentSection]:
+        """Parse a multi-tab Google Docs document.
+
+        Args:
+            tabs: List of tab objects from the Google Docs API
+
+        Returns:
+            List of sections from all tabs
+        """
+        all_sections = []
+
+        for tab_index, tab in enumerate(tabs):
+            # Get tab title and content
+            tab_title = self._get_tab_title(tab)
+            print(f"📑 Processing tab {tab_index + 1}: {tab_title}")
+
+            # Parse content from this tab
+            tab_sections = self._parse_single_tab(tab, tab_index)
+
+            # Add tab title as a top-level section if it exists
+            if tab_title and tab_sections:
+                # Create a section for the tab itself
+                tab_section = DocumentSection(
+                    title=tab_title,
+                    level=1,  # Top-level tab
+                    elements=[],
+                    subsections=tab_sections,
+                )
+                all_sections.append(tab_section)
+            else:
+                # Add sections directly if no tab title
+                all_sections.extend(tab_sections)
+
+            # Recursively parse child tabs
+            if "childTabs" in tab:
+                child_sections = self._parse_tabbed_document(tab["childTabs"])
+                all_sections.extend(child_sections)
+
+        return all_sections
+
+    def _parse_single_tab(self, tab: dict[str, Any], tab_index: int) -> list[DocumentSection]:
+        """Parse content from a single tab.
+
+        Args:
+            tab: Single tab object from the API
+            tab_index: Index of the tab
+
+        Returns:
+            List of sections from this tab
+        """
+        # Get content from the documentTab
+        document_tab = tab.get("documentTab", {})
+        content = document_tab.get("body", {}).get("content", [])
+
+        if not content:
+            print(f"   ⚠️  Tab {tab_index + 1} has no content")
+            return []
+
+        # Parse the content into sections
+        sections = self._parse_content_into_sections(content)
+        print(f"   ✅ Found {len(sections)} sections in tab {tab_index + 1}")
+
+        return sections
+
+    def _get_tab_title(self, tab: dict[str, Any]) -> str:
+        """Extract the title of a tab.
+
+        Args:
+            tab: Tab object from the API
+
+        Returns:
+            Tab title or empty string if none found
+        """
+        # Try to get tab title from various possible locations
+        tab_properties = tab.get("tabProperties", {})
+
+        # Check for title in tab properties
+        if "title" in tab_properties:
+            return tab_properties["title"]
+
+        # Check for index-based title
+        if "index" in tab_properties:
+            return f"Tab {tab_properties['index'] + 1}"
+
+        # Try to extract from first paragraph if no explicit title
+        document_tab = tab.get("documentTab", {})
+        content = document_tab.get("body", {}).get("content", [])
+
+        for item in content:
+            if "paragraph" in item:
+                element = self._parse_paragraph(item["paragraph"])
+                if element.text.strip():
+                    # Use first non-empty paragraph as title if it's short
+                    if len(element.text.strip()) < 100:
+                        return element.text.strip()
+                    break
+
+        return ""
 
     def _parse_content_into_sections(self, content: list[dict[str, Any]]) -> list[DocumentSection]:
         """Parse document content into hierarchical sections."""

@@ -50,11 +50,12 @@ class GoogleDocsClient:
             self._service = build("docs", "v1", credentials=credentials)
         return self._service
 
-    def get_document(self, document_id: str) -> dict[str, Any]:
+    def get_document(self, document_id: str, include_tabs: bool = True) -> dict[str, Any]:
         """Get a Google Docs document.
 
         Args:
             document_id: The ID of the Google Docs document
+            include_tabs: Whether to include tab content in the response
 
         Returns:
             Document data from Google Docs API
@@ -64,7 +65,34 @@ class GoogleDocsClient:
         """
         try:
             service = self._get_service()
-            document = service.documents().get(documentId=document_id).execute()
+
+            # Build the request with optional tab inclusion
+            request = service.documents().get(documentId=document_id)
+
+            # Include tabs content if requested
+            if include_tabs:
+                try:
+                    # Use the includeTabsContent parameter to get all tabs
+                    print("🔍 Requesting document with all tabs content...")
+                    document = (
+                        service.documents()
+                        .get(documentId=document_id, includeTabsContent=True)
+                        .execute()
+                    )
+
+                    if "tabs" in document and len(document["tabs"]) > 0:
+                        print(f"✅ Successfully retrieved {len(document['tabs'])} tabs")
+                    else:
+                        print("⚠️  No tabs found in response, document may be single-tab")
+
+                except Exception as tab_error:
+                    print(f"⚠️  Error requesting tabs content: {tab_error}")
+                    print("🔄 Falling back to basic request...")
+                    # Fall back to basic request
+                    document = service.documents().get(documentId=document_id).execute()
+            else:
+                document = request.execute()
+
             return document
         except Exception as e:
             raise Exception(f"Failed to get document {document_id}: {str(e)}")
