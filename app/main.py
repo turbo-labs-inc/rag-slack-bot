@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.config import settings
+from app.config import get_settings
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,9 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Load environment variables
 load_dotenv()
 
-# Configure logging
+# Configure logging (use INFO as default until settings are loaded)
 logging.basicConfig(
-    level=getattr(logging, settings.log_level),
+    level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     """Main application entry point."""
+    settings = get_settings()
     logger.info(f"Starting Document Q&A Slack Bot in {settings.environment} mode")
     logger.info(f"Using LLM provider: {settings.llm_provider}")
 

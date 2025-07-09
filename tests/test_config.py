@@ -1,6 +1,5 @@
 """Tests for configuration module."""
 
-
 import pytest
 
 from app.config import Environment, LLMProvider, Settings

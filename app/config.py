@@ -113,5 +113,13 @@ class Settings(BaseSettings):
             raise ValueError("Anthropic API key is required when using Anthropic provider")
 
 
-# Global settings instance
-settings = Settings()
+# Global settings instance - lazy loaded
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    """Get the global settings instance."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
