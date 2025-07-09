@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # Google Docs Configuration
     google_docs_id: str = Field(..., description="Google Docs document ID to index")
     google_service_account_key_path: Path = Field(
-        default=Path("./credentials/google-service-account.json"),
+        default=Path("./credentials/google-docs-service-account.json"),
         description="Path to Google service account credentials JSON",
     )
 
