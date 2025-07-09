@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "slack-bolt>=1.19.1",
+    "aiohttp>=3.8.0",
     "google-api-python-client>=2.149.0",
     "google-auth>=2.34.0",
     "chromadb>=0.5.0",

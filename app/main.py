@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.config import get_settings
+from app.slack import GravitateTutorBot
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -36,19 +37,16 @@ async def main() -> None:
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
 
-    # TODO: Initialize components
-    # - Slack bot
-    # - ChromaDB client
-    # - LLM provider
-    # - Start bot
-
-    logger.info("Bot is ready!")
-
-    # Keep the bot running
+    # Initialize and start Slack bot
+    logger.info("Initializing Gravitate Tutor bot...")
+    bot = GravitateTutorBot()
+    
     try:
-        await asyncio.Event().wait()
+        logger.info("Starting Slack bot...")
+        await bot.start()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
+        await bot.stop()
 
 
 if __name__ == "__main__":
