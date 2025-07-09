@@ -14,6 +14,7 @@ from slack_bolt.request.async_request import AsyncBoltRequest
 from app.config import get_settings
 from app.embedding import DocumentIndexer
 from app.google_docs import GoogleDocsClient, GoogleDocsParser
+from app.query import QueryProcessor, QueryContext
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class GravitateTutorBot:
         
         # Initialize document components
         self.indexer = DocumentIndexer()
+        self.query_processor = QueryProcessor(indexer=self.indexer)
         self.docs_client = None
         self.docs_parser = None
         
@@ -67,25 +69,33 @@ class GravitateTutorBot:
             return
         
         user_id = command["user_id"]
+        channel_id = command.get("channel_id")
         logger.info(f"User {user_id} asked: {question}")
         
         try:
             # Show typing indicator
             await respond("🤔 Searching documentation...")
             
-            # Search for relevant chunks
-            results = await self.indexer.search_documents(
-                query=question,
-                collection_name="document_chunks",
-                limit=5
+            # Create query context
+            context = QueryContext(
+                user_id=user_id,
+                channel_id=channel_id,
             )
             
-            if not results:
+            # Process query with RAG pipeline
+            result = await self.query_processor.process_query(
+                query=question,
+                context=context,
+                search_limit=5,
+                min_similarity=0.1,
+            )
+            
+            if not result.search_results:
                 await respond("❌ I couldn't find any relevant information for your question. Try rephrasing or ask about a different topic.")
                 return
             
-            # Format response
-            response = self._format_search_response(question, results)
+            # Format response for Slack
+            response = self.query_processor.format_for_slack(result)
             await respond(response)
             
         except Exception as e:
@@ -176,6 +186,7 @@ class GravitateTutorBot:
         """Handle app mentions."""
         text = event.get("text", "")
         user = event.get("user")
+        channel = event.get("channel")
         
         # Remove the bot mention from the text
         question = text.split(">", 1)[-1].strip()
@@ -187,19 +198,26 @@ class GravitateTutorBot:
         logger.info(f"User {user} mentioned bot with: {question}")
         
         try:
-            # Search for relevant chunks
-            results = await self.indexer.search_documents(
-                query=question,
-                collection_name="document_chunks",
-                limit=5
+            # Create query context
+            context = QueryContext(
+                user_id=user,
+                channel_id=channel,
             )
             
-            if not results:
+            # Process query with RAG pipeline
+            result = await self.query_processor.process_query(
+                query=question,
+                context=context,
+                search_limit=5,
+                min_similarity=0.1,
+            )
+            
+            if not result.search_results:
                 await say("❌ I couldn't find relevant information. Try rephrasing your question or use `/gt_help` for examples.")
                 return
             
             # Format and send response
-            response = self._format_search_response(question, results)
+            response = self.query_processor.format_for_slack(result)
             await say(response)
             
         except Exception as e:
@@ -244,72 +262,39 @@ class GravitateTutorBot:
             return
         
         try:
-            # Treat DM as a question
-            results = await self.indexer.search_documents(
-                query=text,
-                collection_name="document_chunks",
-                limit=5
+            # Create query context
+            context = QueryContext(
+                user_id=user,
+                channel_id=event.get("channel"),
             )
             
-            if not results:
+            # Process query with RAG pipeline
+            result = await self.query_processor.process_query(
+                query=text,
+                context=context,
+                search_limit=5,
+                min_similarity=0.1,
+            )
+            
+            if not result.search_results:
                 await say("❌ I couldn't find relevant information. Try rephrasing your question.")
                 return
             
             # Format and send response
-            response = self._format_search_response(text, results)
+            response = self.query_processor.format_for_slack(result)
             await say(response)
             
         except Exception as e:
             logger.error(f"Error handling direct message: {e}")
             await say("❌ Sorry, I encountered an error. Please try again later.")
 
-    def _format_search_response(self, question: str, results: list[dict[str, Any]]) -> str:
-        """Format search results into a Slack message."""
-        if not results:
-            return "❌ No relevant information found."
-        
-        # Start with the answer summary from top result
-        top_result = results[0]
-        response_parts = []
-        
-        # Add main answer
-        response_parts.append(f"💡 *Answer to: {question}*\n")
-        
-        # Use the top result's content as the main answer
-        main_content = top_result["content"][:500]
-        if len(top_result["content"]) > 500:
-            main_content += "..."
-        
-        response_parts.append(f"{main_content}\n")
-        
-        # Add source information
-        source_section = top_result["metadata"].get("source_section", "Unknown")
-        source_tab = top_result["metadata"].get("source_tab", "Unknown")
-        similarity = top_result["similarity"]
-        
-        response_parts.append(f"📍 *Source:* {source_tab} → {source_section} (confidence: {similarity:.0%})")
-        
-        # Add related sections if we have multiple good results
-        good_results = [r for r in results[1:3] if r["similarity"] > 0.3]
-        if good_results:
-            response_parts.append("\n🔗 *Related sections:*")
-            for result in good_results:
-                section = result["metadata"].get("source_section", "Unknown")
-                tab = result["metadata"].get("source_tab", "Unknown")
-                sim = result["similarity"]
-                response_parts.append(f"• {tab} → {section} ({sim:.0%})")
-        
-        # Add help hint
-        response_parts.append(f"\n💬 Use `/gt_help` for more commands or ask follow-up questions!")
-        
-        return "\n".join(response_parts)
 
     async def start(self):
         """Start the Slack bot."""
         logger.info("Starting Gravitate Tutor bot...")
         
         # Initialize and health check components
-        health = await self.indexer.health_check()
+        health = await self.query_processor.health_check()
         if not health["overall"]:
             logger.error("Health check failed - bot may not work properly")
             logger.error(f"Health status: {health}")
