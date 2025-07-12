@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Load environment variables
 load_dotenv()
 
-# Configure logging (use INFO as default until settings are loaded)
+# Configure logging (use INFO as default)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

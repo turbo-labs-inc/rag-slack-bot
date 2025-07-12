@@ -87,7 +87,7 @@ class GeminiProvider(LLMProvider):
             )
 
             return ResponseResult(
-                response=response.text,
+                content=response.text,
                 model=self.config.model,
                 token_count=response.usage_metadata.total_token_count
                 if response.usage_metadata

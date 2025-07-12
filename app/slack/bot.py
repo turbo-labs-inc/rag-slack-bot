@@ -10,6 +10,7 @@ from slack_bolt.context.ack.async_ack import AsyncAck
 from slack_bolt.context.respond.async_respond import AsyncRespond
 from slack_bolt.context.say.async_say import AsyncSay
 from slack_bolt.request.async_request import AsyncBoltRequest
+from slack_sdk.web.async_client import AsyncWebClient
 
 from app.config import get_settings
 from app.embedding import DocumentIndexer
@@ -73,8 +74,8 @@ class GravitateTutorBot:
         logger.info(f"User {user_id} asked: {question}")
         
         try:
-            # Show typing indicator
-            await respond("🤔 Searching documentation...")
+            # Immediate acknowledgment
+            initial_response = await respond("🔍 Searching documentation...")
             
             # Create query context
             context = QueryContext(
@@ -91,12 +92,15 @@ class GravitateTutorBot:
             )
             
             if not result.search_results:
-                await respond("❌ I couldn't find any relevant information for your question. Try rephrasing or ask about a different topic.")
+                # Replace initial response with no results message
+                await respond("❌ I couldn't find any relevant information for your question. Try rephrasing or ask about a different topic.", replace_original=True)
                 return
             
             # Format response for Slack
             response = self.query_processor.format_for_slack(result)
-            await respond(response)
+            
+            # Replace initial response with real answer
+            await respond(response, replace_original=True)
             
         except Exception as e:
             logger.error(f"Error handling ask command: {e}")
@@ -182,6 +186,7 @@ class GravitateTutorBot:
         self,
         event: dict[str, Any],
         say: AsyncSay,
+        client: AsyncWebClient,
     ):
         """Handle app mentions."""
         text = event.get("text", "")
@@ -198,6 +203,9 @@ class GravitateTutorBot:
         logger.info(f"User {user} mentioned bot with: {question}")
         
         try:
+            # Immediate acknowledgment
+            initial_msg = await say("🔍 Searching documentation...")
+            
             # Create query context
             context = QueryContext(
                 user_id=user,
@@ -211,6 +219,16 @@ class GravitateTutorBot:
                 search_limit=5,
                 min_similarity=0.1,
             )
+            
+            # Delete the initial message
+            if initial_msg and initial_msg.get("ts"):
+                try:
+                    await client.chat_delete(
+                        channel=channel,
+                        ts=initial_msg["ts"]
+                    )
+                except Exception as delete_error:
+                    logger.warning(f"Failed to delete initial message: {delete_error}")
             
             if not result.search_results:
                 await say("❌ I couldn't find relevant information. Try rephrasing your question or use `/gt_help` for examples.")
@@ -228,6 +246,7 @@ class GravitateTutorBot:
         self,
         event: dict[str, Any],
         say: AsyncSay,
+        client: AsyncWebClient,
     ):
         """Handle direct messages."""
         # Skip messages from bots
@@ -241,6 +260,7 @@ class GravitateTutorBot:
         
         text = event.get("text", "").strip()
         user = event.get("user")
+        channel = event.get("channel")
         
         if not text:
             return
@@ -262,10 +282,13 @@ class GravitateTutorBot:
             return
         
         try:
+            # Immediate acknowledgment
+            initial_msg = await say("🔍 Searching documentation...")
+            
             # Create query context
             context = QueryContext(
                 user_id=user,
-                channel_id=event.get("channel"),
+                channel_id=channel,
             )
             
             # Process query with RAG pipeline
@@ -275,6 +298,16 @@ class GravitateTutorBot:
                 search_limit=5,
                 min_similarity=0.1,
             )
+            
+            # Delete the initial message
+            if initial_msg and initial_msg.get("ts"):
+                try:
+                    await client.chat_delete(
+                        channel=channel,
+                        ts=initial_msg["ts"]
+                    )
+                except Exception as delete_error:
+                    logger.warning(f"Failed to delete initial DM message: {delete_error}")
             
             if not result.search_results:
                 await say("❌ I couldn't find relevant information. Try rephrasing your question.")

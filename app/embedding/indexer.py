@@ -2,7 +2,10 @@
 
 import asyncio
 import logging
+import time
 from typing import Any
+
+from tqdm.asyncio import tqdm
 
 from app.chunking.models import Chunk
 from app.chunking.parser import ChunkParser
@@ -70,24 +73,36 @@ class DocumentIndexer:
         """
         await self._ensure_providers()
 
+        print(f"🚀 Starting document indexing")
+        print(f"📋 Document: {document.title}")
+        print(f"📂 Collection: {collection_name}")
+        print(f"🔧 Smart chunking: {use_smart_chunking}")
+        print(f"🔢 Generate embeddings: {generate_embeddings}")
+        print(f"📦 Batch size: {batch_size}")
+        print("=" * 60)
+
         logger.info(f"Starting document indexing for: {document.title}")
 
         # Step 1: Create chunks
+        print("📝 Step 1/3: Creating document chunks...")
         logger.info("Creating document chunks...")
         if use_smart_chunking:
             self.chunk_parser.use_smart_chunking = True
 
         chunks = await self.chunk_parser.chunk_document(document, self.llm_provider)
+        print(f"✅ Created {len(chunks)} chunks from {len(document.sections)} sections")
         logger.info(f"Created {len(chunks)} chunks")
 
         # Step 2: Generate embeddings
         if generate_embeddings:
-            logger.info("Generating embeddings for chunks...")
+            print(f"\n🔢 Step 2/3: Generating embeddings...")
             chunks_with_embeddings = await self._generate_embeddings_batch(chunks, batch_size)
         else:
+            print(f"\n⏭️  Step 2/3: Skipping embedding generation")
             chunks_with_embeddings = chunks
 
         # Step 3: Create collection and store in vector database
+        print(f"\n💾 Step 3/3: Storing chunks in vector database...")
         logger.info(f"Storing chunks in collection: {collection_name}")
         collection_metadata = {
             "document_id": document.document_id,
@@ -99,6 +114,7 @@ class DocumentIndexer:
 
         await self.vector_db.create_collection(collection_name, collection_metadata)
         await self.vector_db.add_chunks(collection_name, chunks_with_embeddings)
+        print(f"✅ Stored {len(chunks_with_embeddings)} chunks in collection: {collection_name}")
 
         # Step 4: Get final statistics
         stats = await self.vector_db.get_collection_stats(collection_name)
@@ -116,37 +132,97 @@ class DocumentIndexer:
             "collection_statistics": stats,
         }
 
+        print("\n" + "=" * 60)
+        print("🎉 Document indexing completed successfully!")
+        print(f"📋 Document: {document.title}")
+        print(f"📂 Collection: {collection_name}")
+        print(f"📊 Statistics:")
+        print(f"   • Chunks created: {final_stats['chunks_created']}")
+        print(f"   • Chunks with embeddings: {final_stats['chunks_with_embeddings']}")
+        print(f"   • Chunks stored: {final_stats['chunks_stored']}")
+        print(f"   • Success rate: {final_stats['chunks_with_embeddings']/final_stats['chunks_created']*100:.1f}%")
+        print("=" * 60)
+
         logger.info(f"Document indexing completed: {final_stats['chunks_stored']} chunks stored")
         return final_stats
 
     async def _generate_embeddings_batch(
         self, chunks: list[Chunk], batch_size: int = 10
     ) -> list[Chunk]:
-        """Generate embeddings for chunks in batches."""
+        """Generate embeddings for chunks in batches with progress tracking."""
         chunks_with_embeddings = []
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        
+        print(f"🔢 Generating embeddings for {len(chunks)} chunks in {total_batches} batches...")
+        
+        # Create progress bar for batches
+        batch_progress = tqdm(
+            total=total_batches,
+            desc="📦 Processing batches",
+            unit="batch",
+            ncols=100
+        )
+        
+        # Create progress bar for individual chunks
+        chunk_progress = tqdm(
+            total=len(chunks),
+            desc="📄 Processing chunks",
+            unit="chunk",
+            ncols=100
+        )
+        
+        start_time = time.time()
+        successful_embeddings = 0
 
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
-            logger.info(
-                f"Processing embedding batch {i // batch_size + 1}/{(len(chunks) + batch_size - 1) // batch_size}"
-            )
-
+            batch_num = i // batch_size + 1
+            
+            batch_progress.set_description(f"📦 Batch {batch_num}/{total_batches}")
+            
             # Process batch concurrently
             embedding_tasks = [self._generate_chunk_embedding(chunk) for chunk in batch]
-
             batch_results = await asyncio.gather(*embedding_tasks, return_exceptions=True)
 
             # Collect successful results
-            for chunk, result in zip(batch, batch_results):
+            for j, (chunk, result) in enumerate(zip(batch, batch_results)):
+                chunk_idx = i + j + 1
+                
                 if isinstance(result, Exception):
-                    logger.warning(f"Failed to generate embedding for chunk: {result}")
+                    logger.warning(f"Failed to generate embedding for chunk {chunk_idx}: {result}")
+                    chunk_progress.set_description(f"📄 Chunk {chunk_idx}/{len(chunks)} ❌ Error")
                     chunks_with_embeddings.append(chunk)  # Add without embedding
                 else:
                     chunk.embedding = result
+                    successful_embeddings += 1
+                    chunk_progress.set_description(f"📄 Chunk {chunk_idx}/{len(chunks)} ✅ Done")
                     chunks_with_embeddings.append(chunk)
+                
+                # Log individual chunk progress
+                if chunk.metadata and chunk.metadata.source_section:
+                    section_name = chunk.metadata.source_section[:30]
+                    tab_name = chunk.metadata.source_tab[:20] if chunk.metadata.source_tab else "Unknown"
+                    logger.info(f"✅ Chunk {chunk_idx}/{len(chunks)}: {tab_name} → {section_name}...")
+                
+                chunk_progress.update(1)
+            
+            batch_progress.update(1)
+            
+            # Log batch completion with timing
+            elapsed = time.time() - start_time
+            chunks_per_second = (i + len(batch)) / elapsed if elapsed > 0 else 0
+            logger.info(f"📦 Batch {batch_num}/{total_batches} complete - {chunks_per_second:.1f} chunks/sec")
 
-        successful_embeddings = len([c for c in chunks_with_embeddings if c.embedding])
-        logger.info(f"Generated {successful_embeddings}/{len(chunks)} embeddings successfully")
+        batch_progress.close()
+        chunk_progress.close()
+        
+        total_time = time.time() - start_time
+        final_rate = len(chunks) / total_time if total_time > 0 else 0
+        
+        print(f"🎉 Embedding generation complete!")
+        print(f"   ✅ Successfully generated: {successful_embeddings}/{len(chunks)} embeddings")
+        print(f"   ⏱️  Total time: {total_time:.1f}s ({final_rate:.1f} chunks/sec)")
+        print(f"   🚀 Using {self.llm_provider.__class__.__name__}")
 
         return chunks_with_embeddings
 

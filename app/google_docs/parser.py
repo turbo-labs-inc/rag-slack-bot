@@ -23,6 +23,8 @@ class DocumentSection:
     level: int
     elements: list[DocumentElement] = field(default_factory=list)
     subsections: list["DocumentSection"] = field(default_factory=list)
+    tab_title: str = ""  # Title of the tab this section belongs to
+    tab_id: str = ""     # ID of the tab for deep linking
 
     def get_full_text(self) -> str:
         """Get all text content from this section and subsections."""
@@ -118,12 +120,13 @@ class GoogleDocsParser:
         all_sections = []
 
         for tab_index, tab in enumerate(tabs):
-            # Get tab title and content
+            # Get tab title, ID, and content
             tab_title = self._get_tab_title(tab)
+            tab_id = self._get_tab_id(tab)
             print(f"📑 Processing tab {tab_index + 1}: {tab_title}")
 
             # Parse content from this tab
-            tab_sections = self._parse_single_tab(tab, tab_index)
+            tab_sections = self._parse_single_tab(tab, tab_index, tab_id)
 
             # Add tab title as a top-level section if it exists
             if tab_title and tab_sections:
@@ -133,6 +136,8 @@ class GoogleDocsParser:
                     level=1,  # Top-level tab
                     elements=[],
                     subsections=tab_sections,
+                    tab_title=tab_title,  # Assign tab info to wrapper section too
+                    tab_id=tab_id,
                 )
                 all_sections.append(tab_section)
             else:
@@ -146,17 +151,19 @@ class GoogleDocsParser:
 
         return all_sections
 
-    def _parse_single_tab(self, tab: dict[str, Any], tab_index: int) -> list[DocumentSection]:
+    def _parse_single_tab(self, tab: dict[str, Any], tab_index: int, tab_id: str) -> list[DocumentSection]:
         """Parse content from a single tab.
 
         Args:
             tab: Single tab object from the API
             tab_index: Index of the tab
+            tab_id: Tab ID for deep linking
 
         Returns:
             List of sections from this tab
         """
-        # Get content from the documentTab
+        # Get tab title and content
+        tab_title = self._get_tab_title(tab)
         document_tab = tab.get("documentTab", {})
         content = document_tab.get("body", {}).get("content", [])
 
@@ -166,6 +173,12 @@ class GoogleDocsParser:
 
         # Parse the content into sections
         sections = self._parse_content_into_sections(content)
+        
+        # Add tab information to all sections (we'll use this during chunking)
+        for section in sections:
+            section.tab_title = tab_title
+            section.tab_id = tab_id
+            
         print(f"   ✅ Found {len(sections)} sections in tab {tab_index + 1}")
 
         return sections
@@ -177,16 +190,16 @@ class GoogleDocsParser:
             tab: Tab object from the API
 
         Returns:
-            Tab title or empty string if none found
+            Tab title or fallback name if none found
         """
         # Try to get tab title from various possible locations
         tab_properties = tab.get("tabProperties", {})
 
-        # Check for title in tab properties
-        if "title" in tab_properties:
-            return tab_properties["title"]
+        # Check for title in tab properties (this should work for most Google Docs)
+        if "title" in tab_properties and tab_properties["title"]:
+            return tab_properties["title"].strip()
 
-        # Check for index-based title
+        # Check for index-based title as fallback
         if "index" in tab_properties:
             return f"Tab {tab_properties['index'] + 1}"
 
@@ -203,7 +216,20 @@ class GoogleDocsParser:
                         return element.text.strip()
                     break
 
-        return ""
+        # Final fallback: use a descriptive name
+        return "Untitled Tab"
+
+    def _get_tab_id(self, tab: dict[str, Any]) -> str:
+        """Extract the ID of a tab.
+
+        Args:
+            tab: Tab object from the API
+
+        Returns:
+            Tab ID or empty string if none found
+        """
+        tab_properties = tab.get("tabProperties", {})
+        return tab_properties.get("tabId", "")
 
     def _parse_content_into_sections(self, content: list[dict[str, Any]]) -> list[DocumentSection]:
         """Parse document content into hierarchical sections."""

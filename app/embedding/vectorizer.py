@@ -163,8 +163,9 @@ class ChromaVectorDatabase(VectorDatabase):
                     metadata.update(
                         {
                             "source_document_id": chunk.metadata.source_document_id,
-                            "source_tab": chunk.metadata.source_tab or "unknown",
-                            "source_section": chunk.metadata.source_section or "unknown",
+                            "source_tab": chunk.metadata.source_tab or "Untitled Tab",
+                            "source_tab_id": chunk.metadata.source_tab_id,  # Add missing tab ID
+                            "source_section": chunk.metadata.source_section or "Untitled Section",
                             "heading_level": chunk.metadata.heading_level,
                             "contains_question": chunk.metadata.contains_question,
                             "estimated_tokens": chunk.metadata.estimated_tokens,

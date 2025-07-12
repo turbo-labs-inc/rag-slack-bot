@@ -45,7 +45,10 @@ def create_llm_provider(provider_name: str | None = None) -> LLMProvider:
         if not settings.gemini_api_key:
             raise ValueError("Gemini API key is required")
 
-        config = GeminiConfig(api_key=settings.gemini_api_key)
+        config = GeminiConfig(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+        )
         return LLMProviderFactory.create("gemini", config=config)
 
     elif provider_name == LLMProviderEnum.ANTHROPIC:

@@ -10,6 +10,7 @@ class ChunkMetadata:
 
     source_document_id: str
     source_tab: str | None = None
+    source_tab_id: str | None = None  # For Google Docs tab-specific URLs
     source_section: str | None = None
     chunk_index: int = 0
     total_chunks: int = 0

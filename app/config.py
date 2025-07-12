@@ -75,6 +75,10 @@ class Settings(BaseSettings):
         default=None,
         description="Google Gemini API key",
     )
+    gemini_model: str = Field(
+        default="gemini-1.5-flash",
+        description="Google Gemini model to use",
+    )
 
     # Anthropic Configuration
     anthropic_api_key: str | None = Field(

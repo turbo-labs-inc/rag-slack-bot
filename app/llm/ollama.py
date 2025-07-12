@@ -90,6 +90,9 @@ class OllamaProvider(LLMProvider):
             full_prompt = f"Context: {context}\n\nQuestion: {prompt}"
 
         try:
+            logger.debug(f"Sending request to Ollama with model: {self.config.model}")
+            logger.debug(f"Prompt length: {len(full_prompt)} characters")
+            
             response = await self.client.post(
                 "/api/generate",
                 json={
@@ -97,9 +100,14 @@ class OllamaProvider(LLMProvider):
                     "prompt": full_prompt,
                     "stream": False,
                 },
+                timeout=180.0,  # Increased timeout for longer prompts
             )
+            
+            logger.debug(f"Ollama response status: {response.status_code}")
             response.raise_for_status()
             data = response.json()
+            
+            logger.debug(f"Ollama response data keys: {data.keys()}")
 
             return ResponseResult(
                 content=data["response"],
@@ -108,12 +116,26 @@ class OllamaProvider(LLMProvider):
                 finish_reason=data.get("done_reason"),
             )
 
+        except httpx.TimeoutException as e:
+            logger.error(f"Ollama request timed out after 180s: {e}")
+            logger.error(f"Model: {self.config.model}, Prompt length: {len(full_prompt)}")
+            raise RuntimeError(f"Ollama request timed out: {e}")
         except httpx.RequestError as e:
             logger.error(f"Ollama response request failed: {e}")
+            logger.error(f"Model: {self.config.model}, Host: {self.config.host}")
+            logger.error(f"Prompt length: {len(full_prompt)}")
             raise RuntimeError(f"Failed to generate response: {e}")
         except httpx.HTTPStatusError as e:
             logger.error(f"Ollama response HTTP error: {e}")
+            logger.error(f"Status: {e.response.status_code}")
+            logger.error(f"Response text: {e.response.text}")
+            logger.error(f"Model: {self.config.model}, Host: {self.config.host}")
             raise RuntimeError(f"Ollama API error: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error in Ollama generate_response: {e}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Model: {self.config.model}, Host: {self.config.host}")
+            raise RuntimeError(f"Unexpected error: {e}")
 
     async def summarize(self, text: str, max_length: int = 100) -> ResponseResult:
         """Summarize text using Ollama.

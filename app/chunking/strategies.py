@@ -1,8 +1,11 @@
 """Chunking strategies for different document processing approaches."""
 
+import asyncio
 import re
 from abc import ABC, abstractmethod
 from typing import Any
+
+from tqdm import tqdm
 
 from app.google_docs.parser import DocumentSection, ParsedDocument
 from app.llm.base import LLMProvider
@@ -40,16 +43,27 @@ class BasicChunkingStrategy(ChunkingStrategy):
         chunks = []
         chunk_index = 0
 
-        for section in document.sections:
-            section_chunks = await self._chunk_section(section, document.document_id, chunk_index)
-            chunks.extend(section_chunks)
-            chunk_index += len(section_chunks)
+        print(f"📝 Basic chunking {len(document.sections)} sections...")
+        
+        # Progress bar for sections
+        with tqdm(total=len(document.sections), desc="✂️  Chunking sections", unit="section", ncols=100) as pbar:
+            for section in document.sections:
+                section_chunks = await self._chunk_section(
+                    section, document.document_id, chunk_index, section.tab_title, section.tab_id
+                )
+                chunks.extend(section_chunks)
+                chunk_index += len(section_chunks)
+                
+                # Update progress
+                pbar.set_description(f"✂️  Section: {section.title[:30]}...")
+                pbar.update(1)
 
         # Update total chunk count in metadata
         for chunk in chunks:
             if chunk.metadata:
                 chunk.metadata.total_chunks = len(chunks)
 
+        print(f"✅ Basic chunking completed: {len(chunks)} chunks from {len(document.sections)} sections")
         return chunks
 
     async def _chunk_section(
@@ -58,6 +72,7 @@ class BasicChunkingStrategy(ChunkingStrategy):
         document_id: str,
         start_chunk_index: int,
         tab_name: str | None = None,
+        tab_id: str | None = None,
     ) -> list[Chunk]:
         """Chunk a single section."""
         chunks = []
@@ -73,6 +88,7 @@ class BasicChunkingStrategy(ChunkingStrategy):
             metadata = ChunkMetadata(
                 source_document_id=document_id,
                 source_tab=tab_name,
+                source_tab_id=tab_id,
                 source_section=section.title,
                 chunk_index=start_chunk_index,
                 start_position=0,
@@ -93,6 +109,7 @@ class BasicChunkingStrategy(ChunkingStrategy):
             metadata = ChunkMetadata(
                 source_document_id=document_id,
                 source_tab=tab_name,
+                source_tab_id=tab_id,
                 source_section=section.title,
                 chunk_index=start_chunk_index + i,
                 start_position=0,  # Will be updated later
@@ -169,30 +186,72 @@ class SmartChunkingStrategy(ChunkingStrategy):
     async def chunk_document(self, document: ParsedDocument) -> list[Chunk]:
         """Chunk document using LLM-assisted semantic analysis."""
         try:
-            chunks = []
-            chunk_index = 0
-
-            for section in document.sections:
-                section_chunks = await self._chunk_section_semantically(
-                    section, document.document_id, chunk_index
-                )
-
-                # Generate summaries if enabled
-                if self.use_summaries:
-                    for chunk in section_chunks:
-                        if len(chunk.content) > 200:  # Only summarize substantial chunks
-                            summary = await self._generate_summary(chunk.content)
-                            chunk.summary = summary
-
-                chunks.extend(section_chunks)
-                chunk_index += len(section_chunks)
+            print(f"📝 Smart chunking {len(document.sections)} sections...")
+            
+            # Process sections concurrently in batches
+            batch_size = 3  # Process 3 sections at a time to avoid overwhelming the LLM
+            all_chunks = []
+            
+            for i in range(0, len(document.sections), batch_size):
+                batch = document.sections[i:i + batch_size]
+                batch_num = i // batch_size + 1
+                total_batches = (len(document.sections) + batch_size - 1) // batch_size
+                
+                print(f"🔄 Processing batch {batch_num}/{total_batches} ({len(batch)} sections)")
+                
+                # Create concurrent tasks for this batch
+                tasks = []
+                for j, section in enumerate(batch):
+                    chunk_index = sum(len(s.content) for s in document.sections[:i+j]) // 1000  # Rough estimate
+                    task = self._chunk_section_semantically(
+                        section, document.document_id, chunk_index, section.tab_title, section.tab_id
+                    )
+                    tasks.append(task)
+                
+                # Execute batch concurrently
+                with tqdm(total=len(batch), desc=f"📦 Batch {batch_num}", unit="section", ncols=100) as pbar:
+                    batch_results = []
+                    for task in asyncio.as_completed(tasks):
+                        section_chunks = await task
+                        batch_results.append(section_chunks)
+                        pbar.update(1)
+                
+                # Collect results
+                for section_chunks in batch_results:
+                    all_chunks.extend(section_chunks)
+            
+            # Generate summaries concurrently if enabled
+            if self.use_summaries:
+                print(f"📝 Generating summaries for {len(all_chunks)} chunks...")
+                summary_tasks = []
+                for chunk in all_chunks:
+                    if len(chunk.content) > 200:  # Only summarize substantial chunks
+                        summary_tasks.append(self._generate_summary(chunk.content))
+                    else:
+                        summary_tasks.append(asyncio.sleep(0))  # Placeholder for consistency
+                
+                # Process summaries in batches to avoid overwhelming the LLM
+                summary_batch_size = 5
+                with tqdm(total=len(all_chunks), desc="📝 Summarizing", unit="chunk", ncols=100) as pbar:
+                    for i in range(0, len(summary_tasks), summary_batch_size):
+                        batch_tasks = summary_tasks[i:i + summary_batch_size]
+                        batch_summaries = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                        
+                        # Assign summaries to chunks
+                        for j, result in enumerate(batch_summaries):
+                            chunk_idx = i + j
+                            if chunk_idx < len(all_chunks) and not isinstance(result, Exception) and result:
+                                all_chunks[chunk_idx].summary = result
+                        
+                        pbar.update(len(batch_tasks))
 
             # Update total chunk count
-            for chunk in chunks:
+            for chunk in all_chunks:
                 if chunk.metadata:
-                    chunk.metadata.total_chunks = len(chunks)
+                    chunk.metadata.total_chunks = len(all_chunks)
 
-            return chunks
+            print(f"✅ Smart chunking completed: {len(all_chunks)} chunks from {len(document.sections)} sections")
+            return all_chunks
 
         except Exception as e:
             print(f"⚠️  Smart chunking failed: {e}, falling back to basic strategy")
@@ -204,6 +263,7 @@ class SmartChunkingStrategy(ChunkingStrategy):
         document_id: str,
         start_chunk_index: int,
         tab_name: str | None = None,
+        tab_id: str | None = None,
     ) -> list[Chunk]:
         """Chunk section using semantic analysis."""
         section_text = section.get_full_text()
@@ -214,7 +274,7 @@ class SmartChunkingStrategy(ChunkingStrategy):
         # If section is small, use basic strategy
         if len(section_text) <= self.max_chunk_size:
             return await self.basic_strategy._chunk_section(
-                section, document_id, start_chunk_index, tab_name
+                section, document_id, start_chunk_index, tab_name, tab_id
             )
 
         # Use LLM to identify semantic break points

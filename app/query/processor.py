@@ -101,8 +101,8 @@ class QueryProcessor:
                     content=result["content"],
                     similarity=result["similarity"],
                     metadata=result["metadata"],
-                    source_section=result["metadata"].get("source_section", "Unknown"),
-                    source_tab=result["metadata"].get("source_tab", "Unknown"),
+                    source_section=result["metadata"].get("source_section", "Untitled Section"),
+                    source_tab=result["metadata"].get("source_tab", "Untitled Tab"),
                     document_url=self._generate_doc_url(result["metadata"]),
                 )
                 search_results.append(search_result)
@@ -117,17 +117,20 @@ class QueryProcessor:
             metadata: Chunk metadata
             
         Returns:
-            Google Doc URL or None
+            Google Doc URL with tab parameter or None
         """
         doc_id = metadata.get("source_document_id")
+        tab_id = metadata.get("source_tab_id")
+        
         if not doc_id:
             return None
         
         # Create URL to Google Doc
         base_url = f"https://docs.google.com/document/d/{doc_id}/edit"
         
-        # TODO: Add heading anchor if possible
-        # Google Docs doesn't have stable heading anchors, so we'll use the base URL
+        # Add tab parameter if available
+        if tab_id:
+            base_url += f"?tab={tab_id}"
         
         return base_url
 
@@ -160,22 +163,31 @@ class QueryProcessor:
         
         context_text = "\n\n".join(context_parts)
         
-        # Create RAG prompt with system instructions embedded
-        full_prompt = f"""You are a helpful assistant that answers questions about fuel supply and dispatch documentation. Use the provided context to answer questions accurately and concisely.
+        # Company context for better domain understanding
+        company_context = """Gravitate is an AI-powered supply and dispatch platform specifically designed for the fuel distribution industry. The software optimizes fuel supply, in-tank inventory management, and logistics operations for convenience stores (C-stores), wholesalers, and carriers in the petroleum industry.
 
-Guidelines:
-- Base your answer on the provided context
-- Be specific and factual
-- If the context doesn't contain enough information, say so
-- Keep responses conversational but informative
-- Don't make up information not in the context
+The platform serves the downstream segment of the U.S. petroleum industry, working with wholesale distributors, rack wholesale marketers, and retail fuel suppliers. Gravitate's solution addresses the complex challenges of fuel logistics including supply strategy optimization, automated order creation, real-time inventory monitoring, pricing engine management, carrier dispatch coordination, and delivery reconciliation. Key industry terminology includes rack pricing, bulk products, splash blending, branded vs unbranded fuel, basis pricing, spot markets, futures markets, and supply directives.
 
-Context from documentation:
+The system integrates with Automatic Tank Gauge (ATG) systems, DTN price feeds, carrier management platforms, and various data sources to provide comprehensive fuel supply chain management from terminal rack to retail site delivery."""
+
+        # Create RAG prompt with company context
+        full_prompt = f"""You are a concise AI assistant for Gravitate team members. Answer questions about our fuel distribution platform using the provided documentation.
+
+Company Context: {company_context.split('.')[0]}. 
+
+Documentation:
 {context_text}
 
-User question: {query}
+Guidelines:
+- Answer in BULLET POINTS (2-4 bullets max)
+- Use internal perspective ("our platform", "our customers")
+- Each bullet should be one key fact from the documentation
+- Keep bullets concise and direct
+- If info is missing, briefly say so
 
-Please provide a helpful answer based on the context above."""
+Question: {query}
+
+Answer:"""
 
         # Generate response
         response_result = await self.llm_provider.generate_response(
@@ -283,17 +295,54 @@ Please provide a helpful answer based on the context above."""
         parts = []
         
         # Main answer
-        parts.append(f"💡 *Answer:*\n{result.answer}")
+        parts.append(result.answer)
         
-        # Sources
+        # Sources - group by tab and deduplicate
         if result.search_results:
             parts.append(f"\n📚 *Sources ({result.confidence:.0%} confidence):*")
             
-            for i, source in enumerate(result.search_results[:3], 1):
-                source_text = f"• {source.source_tab} → {source.source_section}"
-                if source.document_url:
-                    source_text += f" (<{source.document_url}|View Doc>)"
-                parts.append(source_text)
+            # Group sources by tab
+            tabs_used = {}
+            for source in result.search_results[:5]:  # Consider top 5 results
+                tab_name = source.source_tab
+                if tab_name not in tabs_used:
+                    tabs_used[tab_name] = {
+                        'url': source.document_url,
+                        'sections': [],
+                        'similarity': source.similarity
+                    }
+                
+                # Add section if not already included
+                section_name = source.source_section
+                if section_name not in [s['name'] for s in tabs_used[tab_name]['sections']]:
+                    tabs_used[tab_name]['sections'].append({
+                        'name': section_name,
+                        'similarity': source.similarity
+                    })
+                    
+                # Update best similarity for this tab
+                if source.similarity > tabs_used[tab_name]['similarity']:
+                    tabs_used[tab_name]['similarity'] = source.similarity
+            
+            # Sort tabs by best similarity score
+            sorted_tabs = sorted(tabs_used.items(), key=lambda x: x[1]['similarity'], reverse=True)
+            
+            # Format tab references with sections
+            for tab_name, tab_info in sorted_tabs[:3]:  # Show top 3 tabs
+                if tab_info['url']:
+                    tab_link = f"<{tab_info['url']}|{tab_name}>"
+                else:
+                    tab_link = tab_name
+                
+                # Show sections within this tab
+                section_names = [s['name'] for s in tab_info['sections'][:3]]  # Top 3 sections per tab
+                if len(section_names) == 1:
+                    parts.append(f"• {tab_link} → {section_names[0]}")
+                else:
+                    sections_text = ", ".join(section_names)
+                    if len(tab_info['sections']) > 3:
+                        sections_text += f" (+{len(tab_info['sections']) - 3} more)"
+                    parts.append(f"• {tab_link} → {sections_text}")
         
         # Performance info (optional, for debugging)
         if result.processing_time > 2.0:
