@@ -58,8 +58,8 @@ class OllamaProvider(LLMProvider):
             response.raise_for_status()
             data = response.json()
 
-            # Ollama returns embeddings as a list of lists
-            embedding = data["embeddings"][0] if data["embeddings"] else []
+            # Ollama returns embeddings as an array with first element being the embedding
+            embedding = data["embeddings"][0] if "embeddings" in data and data["embeddings"] else []
 
             return EmbeddingResult(
                 embedding=embedding,
