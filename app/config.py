@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     slack_app_token: str = Field(..., description="Slack app-level token for Socket Mode")
 
     # Google Docs Configuration
-    google_docs_id: str = Field(..., description="Google Docs document ID to index")
+    google_docs_id: str | None = Field(None, description="Google Docs document ID to index")
+    google_drive_folder_id: str | None = Field(None, description="Google Drive folder ID to index all files")
+    google_file_ids: str | None = Field(None, description="Comma-separated list of Google file IDs to index")
     google_service_account_key_path: Path = Field(
         default=Path("./credentials/google-docs-service-account.json"),
         description="Path to Google service account credentials JSON",

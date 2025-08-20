@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # ChromaDB for vector storage (standalone, no Ollama since you run it locally)
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./chroma_db:/chroma/chroma  # Local directory for persistence
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+      - ALLOW_RESET=TRUE  # Allows clearing the database during development
+    restart: unless-stopped
+
+  # Optional: Run the slack bot in Docker while using local Ollama
+  # slack-bot:
+  #   build: .
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+  #     - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+  #     - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+  #     - GOOGLE_DRIVE_FOLDER_ID=${GOOGLE_DRIVE_FOLDER_ID}
+  #     - CHROMA_HOST=host.docker.internal  # Connect to ChromaDB on host
+  #     - OLLAMA_HOST=http://host.docker.internal:11434  # Connect to Ollama on host
+  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #   volumes:
+  #     - ./app:/app/app
+  #     - ./credentials:/app/credentials:ro
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"  # For Linux compatibility
