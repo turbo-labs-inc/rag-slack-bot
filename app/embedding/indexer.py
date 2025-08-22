@@ -10,7 +10,8 @@ from tqdm.asyncio import tqdm
 from app.chunking.models import Chunk
 from app.chunking.parser import ChunkParser
 from app.google_docs.parser import ParsedDocument
-from app.llm.base import LLMProvider, create_llm_provider
+from app.llm.base import LLMProvider
+from app.llm.factory import create_embedding_provider
 from .vectorizer import VectorDatabase, ChromaVectorDatabase
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class DocumentIndexer:
             self.vector_db = ChromaVectorDatabase()
 
         if self.llm_provider is None:
-            self.llm_provider = await create_llm_provider()
+            self.llm_provider = create_embedding_provider()
 
         if self.chunk_parser is None:
             self.chunk_parser = ChunkParser(
@@ -54,7 +55,7 @@ class DocumentIndexer:
     async def index_document(
         self,
         document: ParsedDocument,
-        collection_name: str = "document_chunks",
+        collection_name: str = "office_documents",
         use_smart_chunking: bool = True,
         generate_embeddings: bool = True,
         batch_size: int = 10,
@@ -249,7 +250,7 @@ class DocumentIndexer:
     async def search_documents(
         self,
         query: str,
-        collection_name: str = "document_chunks",
+        collection_name: str = "office_documents",
         limit: int = 10,
         metadata_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
@@ -284,7 +285,7 @@ class DocumentIndexer:
         logger.info(f"Found {len(results)} results for query")
         return results
 
-    async def get_indexing_stats(self, collection_name: str = "document_chunks") -> dict[str, Any]:
+    async def get_indexing_stats(self, collection_name: str = "office_documents") -> dict[str, Any]:
         """Get statistics about indexed documents.
 
         Args:

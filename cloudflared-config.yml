@@ -1,0 +1,7 @@
+tunnel: 41145b96-6a1b-4659-bf45-38c0862eaa7d
+credentials-file: /Users/skoorbcaz/.cloudflared/41145b96-6a1b-4659-bf45-38c0862eaa7d.json
+
+ingress:
+  - hostname: bot.capspire-training.com
+    service: http://localhost:3000
+  - service: http_status:404

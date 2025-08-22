@@ -62,7 +62,7 @@ class Settings(BaseSettings):
         description="Ollama model to use",
     )
     ollama_embedding_model: str = Field(
-        default="nomic-embed-text",
+        default="mxbai-embed-large",
         description="Ollama embedding model to use",
     )
 

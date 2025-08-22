@@ -20,7 +20,7 @@ class QueryProcessor:
         self,
         indexer: DocumentIndexer | None = None,
         llm_provider: LLMProvider | None = None,
-        collection_name: str = "document_chunks",
+        collection_name: str = "office_documents",
     ):
         """Initialize query processor.
         
@@ -97,12 +97,24 @@ class QueryProcessor:
         search_results = []
         for result in raw_results:
             if result["similarity"] >= min_similarity:
+                # Handle both Office document and Google Docs metadata formats
+                metadata = result["metadata"]
+                
+                # For Office documents, use document_name and path
+                if "document_name" in metadata:
+                    source_section = metadata.get("document_name", "Unknown Document")
+                    source_tab = metadata.get("path", "").strip("/") or "Documents"
+                else:
+                    # For Google Docs, use original fields
+                    source_section = metadata.get("source_section", "Untitled Section")
+                    source_tab = metadata.get("source_tab", "Untitled Tab")
+                
                 search_result = SearchResult(
                     content=result["content"],
                     similarity=result["similarity"],
                     metadata=result["metadata"],
-                    source_section=result["metadata"].get("source_section", "Untitled Section"),
-                    source_tab=result["metadata"].get("source_tab", "Untitled Tab"),
+                    source_section=source_section,
+                    source_tab=source_tab,
                     document_url=self._generate_doc_url(result["metadata"]),
                 )
                 search_results.append(search_result)
@@ -111,26 +123,35 @@ class QueryProcessor:
         return search_results[:limit]
 
     def _generate_doc_url(self, metadata: dict[str, Any]) -> str | None:
-        """Generate Google Doc URL for a search result.
+        """Generate document URL for a search result.
         
         Args:
             metadata: Chunk metadata
             
         Returns:
-            Google Doc URL with tab parameter or None
+            Document URL (Google Docs/Drive) or None
         """
-        doc_id = metadata.get("source_document_id")
+        # Handle both Office document and Google Docs metadata
+        doc_id = metadata.get("source_document_id") or metadata.get("document_id")
         tab_id = metadata.get("source_tab_id")
         
         if not doc_id:
             return None
         
-        # Create URL to Google Doc
-        base_url = f"https://docs.google.com/document/d/{doc_id}/edit"
-        
-        # Add tab parameter if available
+        # Check if it's a Google Docs document (has tab_id)
         if tab_id:
-            base_url += f"?tab={tab_id}"
+            # Google Docs with specific tab
+            base_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+            base_url += f"?tab=t.{tab_id}"
+        else:
+            # Could be either Google Docs without tabs or Drive file
+            # Try to determine based on document ID pattern or metadata
+            if len(doc_id) > 20:  # Google Doc IDs are typically long
+                # Assume it's a Google Doc
+                base_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+            else:
+                # Generic Google Drive file
+                base_url = f"https://drive.google.com/file/d/{doc_id}/view"
         
         return base_url
 
@@ -157,35 +178,29 @@ class QueryProcessor:
         
         # Build context from search results
         context_parts = []
-        for i, result in enumerate(search_results[:3], 1):  # Use top 3 results
-            context_part = f"Source {i} (from {result.source_tab} → {result.source_section}):\n{result.content}"
+        for i, result in enumerate(search_results[:3], 1):  # Use top 3 most relevant results for focus
+            # Clean source reference
+            source = result.source_tab if result.source_tab else "Document"
+            section = f" - {result.source_section}" if result.source_section else ""
+            context_part = f"[{source}{section}]:\n{result.content[:500]}"  # Limit context length
             context_parts.append(context_part)
         
-        context_text = "\n\n".join(context_parts)
+        context_text = "\n---\n".join(context_parts)
         
-        # Company context for better domain understanding
-        company_context = """Gravitate is an AI-powered supply and dispatch platform specifically designed for the fuel distribution industry. The software optimizes fuel supply, in-tank inventory management, and logistics operations for convenience stores (C-stores), wholesalers, and carriers in the petroleum industry.
-
-The platform serves the downstream segment of the U.S. petroleum industry, working with wholesale distributors, rack wholesale marketers, and retail fuel suppliers. Gravitate's solution addresses the complex challenges of fuel logistics including supply strategy optimization, automated order creation, real-time inventory monitoring, pricing engine management, carrier dispatch coordination, and delivery reconciliation. Key industry terminology includes rack pricing, bulk products, splash blending, branded vs unbranded fuel, basis pricing, spot markets, futures markets, and supply directives.
-
-The system integrates with Automatic Tank Gauge (ATG) systems, DTN price feeds, carrier management platforms, and various data sources to provide comprehensive fuel supply chain management from terminal rack to retail site delivery."""
-
-        # Create RAG prompt with company context
-        full_prompt = f"""You are a concise AI assistant for Gravitate team members. Answer questions about our fuel distribution platform using the provided documentation.
-
-Company Context: {company_context.split('.')[0]}. 
+        # Create RAG prompt for concise, high-quality answers
+        full_prompt = f"""You are a concise technical assistant. Answer based ONLY on the provided documentation.
 
 Documentation:
 {context_text}
 
-Guidelines:
-- Answer in BULLET POINTS (2-4 bullets max)
-- Use internal perspective ("our platform", "our customers")
-- Each bullet should be one key fact from the documentation
-- Keep bullets concise and direct
-- If info is missing, briefly say so
+User Question: {query}
 
-Question: {query}
+Instructions:
+- Give a direct, actionable answer
+- Use bullet points for steps
+- Keep response under 3-4 sentences unless listing steps
+- Cite source document names in parentheses
+- If information is incomplete, say so briefly
 
 Answer:"""
 
@@ -284,65 +299,83 @@ Answer:"""
         return max(confidence, 0.0)
 
     def format_for_slack(self, result: QueryResult) -> str:
-        """Format query result for Slack.
+        """Format query result for Slack with proper markdown.
         
         Args:
             result: Query result to format
             
         Returns:
-            Formatted Slack message
+            Formatted Slack message with mrkdwn
         """
         parts = []
         
-        # Main answer
-        parts.append(result.answer)
+        # Main answer - format with proper Slack markdown
+        answer = result.answer
+        # Bold important terms in the answer if they're in backticks or quotes
+        answer = answer.replace('`', '*')  # Convert code ticks to bold
+        parts.append(answer)
         
-        # Sources - group by tab and deduplicate
+        # Sources section with better formatting
         if result.search_results:
-            parts.append(f"\n📚 *Sources ({result.confidence:.0%} confidence):*")
+            parts.append(f"\n*📚 Sources* _{result.confidence:.0%} confidence_")
+            parts.append("")  # Empty line for spacing
             
-            # Group sources by tab
-            tabs_used = {}
-            for source in result.search_results[:5]:  # Consider top 5 results
-                tab_name = source.source_tab
-                if tab_name not in tabs_used:
-                    tabs_used[tab_name] = {
+            # Track unique documents/files
+            seen_docs = {}
+            
+            for source in result.search_results[:5]:  # Top 5 results
+                # Get document name and create unique key
+                doc_name = source.source_tab or "Document"
+                section_name = source.source_section or ""
+                
+                # Clean up document name (remove .docx extensions for cleaner display)
+                if doc_name.endswith('.docx'):
+                    doc_name = doc_name[:-5]
+                elif doc_name.endswith('.doc'):
+                    doc_name = doc_name[:-4]
+                
+                # Create document key for deduplication
+                doc_key = doc_name
+                
+                if doc_key not in seen_docs:
+                    seen_docs[doc_key] = {
                         'url': source.document_url,
                         'sections': [],
-                        'similarity': source.similarity
+                        'best_similarity': source.similarity,
+                        'full_name': doc_name
                     }
                 
-                # Add section if not already included
-                section_name = source.source_section
-                if section_name not in [s['name'] for s in tabs_used[tab_name]['sections']]:
-                    tabs_used[tab_name]['sections'].append({
-                        'name': section_name,
-                        'similarity': source.similarity
-                    })
-                    
-                # Update best similarity for this tab
-                if source.similarity > tabs_used[tab_name]['similarity']:
-                    tabs_used[tab_name]['similarity'] = source.similarity
-            
-            # Sort tabs by best similarity score
-            sorted_tabs = sorted(tabs_used.items(), key=lambda x: x[1]['similarity'], reverse=True)
-            
-            # Format tab references with sections
-            for tab_name, tab_info in sorted_tabs[:3]:  # Show top 3 tabs
-                if tab_info['url']:
-                    tab_link = f"<{tab_info['url']}|{tab_name}>"
-                else:
-                    tab_link = tab_name
+                # Add section if unique and relevant
+                if section_name and section_name not in seen_docs[doc_key]['sections']:
+                    seen_docs[doc_key]['sections'].append(section_name)
                 
-                # Show sections within this tab
-                section_names = [s['name'] for s in tab_info['sections'][:3]]  # Top 3 sections per tab
-                if len(section_names) == 1:
-                    parts.append(f"• {tab_link} → {section_names[0]}")
+                # Track best similarity
+                if source.similarity > seen_docs[doc_key]['best_similarity']:
+                    seen_docs[doc_key]['best_similarity'] = source.similarity
+            
+            # Sort by similarity and format as bullet points
+            sorted_docs = sorted(seen_docs.items(), key=lambda x: x[1]['best_similarity'], reverse=True)
+            
+            for doc_key, doc_info in sorted_docs[:4]:  # Show top 4 documents
+                # Create hyperlink if URL exists
+                if doc_info['url']:
+                    doc_link = f"<{doc_info['url']}|{doc_info['full_name']}>"
                 else:
-                    sections_text = ", ".join(section_names)
-                    if len(tab_info['sections']) > 3:
-                        sections_text += f" (+{len(tab_info['sections']) - 3} more)"
-                    parts.append(f"• {tab_link} → {sections_text}")
+                    doc_link = f"*{doc_info['full_name']}*"
+                
+                # Format confidence percentage
+                confidence_pct = f"({doc_info['best_similarity']:.0%})"
+                
+                # Build the source line
+                if doc_info['sections']:
+                    # Show first 2 sections
+                    sections_to_show = doc_info['sections'][:2]
+                    sections_text = " → " + ", ".join(f"_{s}_" for s in sections_to_show)
+                    if len(doc_info['sections']) > 2:
+                        sections_text += f" _+{len(doc_info['sections']) - 2} more_"
+                    parts.append(f"• {doc_link} {confidence_pct}{sections_text}")
+                else:
+                    parts.append(f"• {doc_link} {confidence_pct}")
         
         # Performance info (optional, for debugging)
         if result.processing_time > 2.0:

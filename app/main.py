@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from app.config import get_settings
 from app.slack import GravitateTutorBot
+from app.web_server import WebServer
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     """Main application entry point."""
     settings = get_settings()
-    logger.info(f"Starting Document Q&A Slack Bot in {settings.environment} mode")
+    logger.info(f"Starting Document Q&A Bot in {settings.environment} mode")
     logger.info(f"Using LLM provider: {settings.llm_provider}")
 
     # Validate configuration
@@ -37,16 +38,26 @@ async def main() -> None:
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
 
+    # Initialize web server for Teams
+    logger.info("Starting web server for Teams integration...")
+    web_server = WebServer(port=3000)
+    web_runner = await web_server.start()
+
     # Initialize and start Slack bot
     logger.info("Initializing Gravitate Tutor bot...")
     bot = GravitateTutorBot()
     
     try:
         logger.info("Starting Slack bot...")
-        await bot.start()
+        # Run both services concurrently
+        await asyncio.gather(
+            bot.start(),
+            asyncio.Event().wait()  # Keep web server running
+        )
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         await bot.stop()
+        await web_server.stop(web_runner)
 
 
 if __name__ == "__main__":

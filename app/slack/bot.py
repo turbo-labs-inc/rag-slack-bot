@@ -135,7 +135,7 @@ class GravitateTutorBot:
             # Re-index document
             stats = await self.indexer.index_document(
                 document=parsed_doc,
-                collection_name="document_chunks",
+                collection_name="office_documents",
                 use_smart_chunking=True,
                 generate_embeddings=True,
                 batch_size=10
